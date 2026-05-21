@@ -1,0 +1,270 @@
+<!doctype html>
+<html lang="es-AR">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Design Race Lab</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link href="https://fonts.googleapis.com/css2?family=Rajdhani:wght@500;600;700&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet" />
+    <link rel="stylesheet" href="styles.css" />
+  </head>
+  <body>
+    <div class="app-shell">
+      <header class="topbar">
+        <div class="brand-lockup">
+          <img class="f1-logo" src="assets/logos/f1-placeholder.png" alt="F1" />
+          <div>
+            <p class="eyebrow">Laboratorio de competición académica</p>
+            <h1>Design Race Lab</h1>
+            <p>Medí, probá y seguí la evolución de tu autito clase a clase.</p>
+          </div>
+        </div>
+        <div class="topbar-tools">
+          <div class="audio-panel" aria-label="Controles de audio">
+            <button class="audio-toggle" id="audioToggle" type="button" aria-pressed="true">Audio on</button>
+            <label>
+              Volumen
+              <input id="volumeControl" type="range" min="0" max="100" value="55" />
+            </label>
+          </div>
+          <div class="session-pill" id="sessionPill">Sin pilotos activos</div>
+        </div>
+      </header>
+
+      <main>
+        <section class="screen login-screen" id="loginScreen" aria-labelledby="login-title">
+          <div class="login-copy">
+            <span class="section-kicker">Acceso al laboratorio</span>
+            <h2 id="login-title">Ingreso del estudiante</h2>
+            <p>Registrate con tus dos apellidos. El orden no importa: el sistema genera el mismo código aunque los escribas invertidos.</p>
+          </div>
+
+          <div class="login-grid">
+            <form id="registerForm" class="panel form-grid">
+              <div class="panel-heading">
+                <span class="section-kicker">Nuevos pilotos</span>
+                <h3>Crear código</h3>
+              </div>
+              <label>
+                Apellido 1
+                <input name="surnameOne" type="text" required placeholder="Ej: Sosa" autocomplete="family-name" />
+              </label>
+              <label>
+                Apellido 2
+                <input name="surnameTwo" type="text" required placeholder="Ej: Pereyra" autocomplete="family-name" />
+              </label>
+              <label>
+                Nombre del auto
+                <input name="carName" type="text" required placeholder="Ej: Flecha Sur" />
+              </label>
+              <fieldset class="icon-picker">
+                <legend>Elegí icono del auto</legend>
+                <div id="carIconGrid" class="car-icon-grid"></div>
+              </fieldset>
+              <button class="button primary full" type="submit">Crear pilotos</button>
+              <p class="code-output" id="newCodeOutput"></p>
+            </form>
+
+            <form id="loginForm" class="panel form-grid">
+              <div class="panel-heading">
+                <span class="section-kicker">Pilotos existentes</span>
+                <h3>Entrar al box</h3>
+              </div>
+              <label>
+                Código de acceso
+                <input name="studentCode" type="text" required placeholder="Ej: UNMdP_0001" autocomplete="off" />
+              </label>
+              <button class="button secondary full" type="submit">Ingresar al box</button>
+              <p class="form-note">El código se muestra al crear los pilotos. Guárdenlo para volver a entrar.</p>
+            </form>
+          </div>
+        </section>
+
+        <section class="screen box-screen hidden" id="boxScreen" aria-labelledby="box-title">
+          <div class="section-toolbar">
+            <div>
+              <span class="section-kicker">Box técnico</span>
+              <h2 id="box-title">Setup de prueba</h2>
+            </div>
+            <button class="button ghost" id="logoutButton" type="button">Salir del box</button>
+          </div>
+
+          <div class="box-layout">
+            <form id="boxForm" class="panel form-grid">
+              <div class="panel-heading compact">
+                <span class="section-kicker">Registro obligatorio</span>
+                <h3>Datos de box</h3>
+              </div>
+              <label>
+                Fecha de prueba
+                <select name="testDate" required></select>
+              </label>
+              <label>
+                Largo entre ejes <span>mm</span>
+                <input name="wheelbase" type="number" min="0" step="0.1" required />
+              </label>
+              <label>
+                Diámetro de rueda <span>mm</span>
+                <input name="wheelDiameter" type="number" min="0" step="0.1" required />
+              </label>
+              <label>
+                Peso del auto <span>g · opcional</span>
+                <input name="weight" type="number" min="0" step="0.1" />
+              </label>
+              <label class="wide">
+                Anotaciones extra
+                <textarea name="notes" rows="5" placeholder="Ej: cambié ruedas, reduje peso, rozaba contra la pista"></textarea>
+              </label>
+              <button class="button primary full" type="submit">Aceptar setup</button>
+            </form>
+
+            <aside class="panel garage-card">
+              <div id="activePilotCard"></div>
+              <div class="history-filter">
+                <label>
+                  Ver historial por fecha
+                  <select id="historyDateSelect"></select>
+                </label>
+              </div>
+              <div id="boxHistory" class="box-history"></div>
+              <button class="button secondary full hidden" id="goRaceButton" type="button">A la carrera</button>
+            </aside>
+          </div>
+        </section>
+
+        <section class="screen race-screen hidden" id="raceScreen" aria-labelledby="race-title">
+          <div class="section-toolbar race-toolbar">
+            <div>
+              <span class="section-kicker">Race mode</span>
+              <h2 id="race-title">Pista de pruebas</h2>
+            </div>
+            <div class="toolbar-controls">
+              <label>
+                Fecha visible
+                <select id="raceDateSelect"></select>
+              </label>
+              <div class="view-buttons" role="group" aria-label="Modos de vista">
+                <button class="button ghost" id="viewSessionButton" type="button">Ver sesión actual</button>
+                <button class="button ghost" id="viewMyResultsButton" type="button">Ver todos mis resultados</button>
+                <button class="button ghost" id="viewMyBestButton" type="button">Ver mi mejor marca</button>
+              </div>
+              <label class="toggle">
+                <input id="competitorsToggle" type="checkbox" checked />
+                <span>Mejor tiempo de otros</span>
+              </label>
+              <label class="toggle">
+                <input id="previousDatesToggle" type="checkbox" checked />
+                <span>Mis fechas anteriores</span>
+              </label>
+              <button class="button ghost" id="backToBoxButton" type="button">Volver al box</button>
+            </div>
+          </div>
+
+          <audio id="raceAudio" loop preload="metadata" src="assets/audio/f1-theme.mp3"></audio>
+
+          <div class="track" id="track">
+            <div class="start-zone">Largada</div>
+            <div class="finish-zone" id="finishZone">Meta dinámica</div>
+            <div class="distance-markers" id="distanceMarkers"></div>
+            <div class="car-layer" id="carLayer"></div>
+            <p class="empty-state" id="emptyState">Todavía no hay marcas finalizadas para esta fecha.</p>
+          </div>
+
+          <div class="race-grid">
+            <form id="raceResultForm" class="panel form-grid result-form">
+              <div class="panel-heading compact">
+                <span class="section-kicker">Nueva marca</span>
+                <h3>Poner marca</h3>
+              </div>
+              <div class="distance-entry">
+                <label>
+                  Metros
+                  <input name="meters" type="number" min="0" step="1" required />
+                </label>
+                <label>
+                  Centímetros
+                  <input name="centimeters" type="number" min="0" max="99" step="1" required />
+                </label>
+              </div>
+              <button class="button primary full" type="submit">Poner marca</button>
+              <p id="markFeedback" class="form-note"></p>
+              <button class="button secondary full finish-button" id="finishRaceButton" type="button">Terminar carrera</button>
+            </form>
+
+            <section class="panel stats-panel">
+              <div class="panel-heading compact">
+                <span class="section-kicker">Telemetría</span>
+                <h3>Estadísticas</h3>
+              </div>
+              <div id="statsPanel" class="stats-content"></div>
+            </section>
+
+            <section class="panel ranking-panel">
+              <div class="panel-heading with-action">
+                <div>
+                  <span class="section-kicker">Clasificación</span>
+                  <h3>Ranking público</h3>
+                </div>
+                <button class="button secondary finish-button compact-finish" id="exportButton" type="button">Terminar carrera</button>
+              </div>
+              <div class="ranking-table" id="rankingTable"></div>
+            </section>
+          </div>
+        </section>
+
+        <section class="screen admin-screen hidden" id="adminScreen" aria-labelledby="admin-title">
+          <div class="section-toolbar">
+            <div>
+              <span class="section-kicker">Profesor</span>
+              <h2 id="admin-title">Panel de control</h2>
+            </div>
+            <button class="button ghost" id="adminLogoutButton" type="button">Salir</button>
+          </div>
+          <div class="admin-grid">
+            <section class="panel">
+              <div class="panel-heading compact">
+                <span class="section-kicker">Pilotos</span>
+                <h3>Equipos y códigos</h3>
+              </div>
+              <div id="adminStudents" class="admin-list"></div>
+            </section>
+            <section class="panel">
+              <div class="panel-heading compact">
+                <span class="section-kicker">Marcas</span>
+                <h3>Resultados cargados</h3>
+              </div>
+              <div id="adminResults" class="admin-list"></div>
+            </section>
+          </div>
+        </section>
+      </main>
+      <footer class="app-footer">version 1.0 creada por Outcomy para FAUD-UNMdP Info2</footer>
+    </div>
+
+    <div class="mark-modal hidden" id="markModal" role="dialog" aria-modal="true" aria-labelledby="markModalTitle">
+      <div class="mark-modal-card">
+        <div id="markModalContent"></div>
+        <div class="modal-actions">
+          <button class="button ghost" id="closeMarkModalButton" type="button">Cerrar</button>
+          <button class="button primary hidden" id="deleteMarkButton" type="button">Eliminar marca</button>
+        </div>
+      </div>
+    </div>
+
+    <div class="mark-modal hidden" id="finishModal" role="dialog" aria-modal="true" aria-labelledby="finishModalTitle">
+      <div class="mark-modal-card">
+        <span class="section-kicker">Cerrar carrera</span>
+        <h3 id="finishModalTitle">Elegí la marca final</h3>
+        <p class="form-note">La sesión quedará con una sola marca registrada.</p>
+        <div id="finishOptions" class="finish-options"></div>
+        <div class="modal-actions">
+          <button class="button ghost" id="cancelFinishButton" type="button">Cancelar</button>
+          <button class="button primary" id="confirmFinishButton" type="button">Guardar marca final</button>
+        </div>
+      </div>
+    </div>
+
+    <script src="app.js"></script>
+  </body>
+</html>

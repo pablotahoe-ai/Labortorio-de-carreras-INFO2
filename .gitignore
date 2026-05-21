@@ -1,0 +1,11 @@
+.DS_Store
+Thumbs.db
+*.log
+dist/
+build/
+.cache/
+.edge-profile/
+.chrome-profile/
+.chrome-check/
+.chrome-check2/
+screenshot.png
