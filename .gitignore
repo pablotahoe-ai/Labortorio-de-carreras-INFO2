@@ -8,4 +8,5 @@ build/
 .chrome-profile/
 .chrome-check/
 .chrome-check2/
+.netlify/
 screenshot.png
