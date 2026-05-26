@@ -3,12 +3,16 @@ const LATEST_VIEW = "__latest__";
 const CAR_SCAN_LIMIT = 80;
 const PRACTICE_WEEKS = 24;
 const TEACHER_CODE = "bruno1301";
+const REMOTE_API_URL = String(window.DESIGN_RACE_API_URL || "").trim();
+const SHARED_STATE_KEYS = ["students", "cars", "setups", "results", "nextCodeNumber"];
 
 const today = () => new Date().toISOString().slice(0, 10);
 let availableIconIds = [];
 let selectedResultId = null;
 let adminSelectedStudentId = null;
 let audioGestureBound = false;
+let remoteSaveTimer = null;
+let applyingRemoteState = false;
 
 const state = {
   students: [],
@@ -23,6 +27,7 @@ const state = {
   showMyPreviousDates: true,
   audioEnabled: true,
   audioVolume: 0.55,
+  nextCodeNumber: 1,
   adminSelectedStudentId: null,
   screen: "login",
 };
@@ -92,10 +97,22 @@ function loadState() {
 
 function migrateState() {
   const ordered = [...state.students].sort((a, b) => String(a.createdAt || "").localeCompare(String(b.createdAt || "")));
-  ordered.forEach((student, index) => {
-    if (!student.code || !student.code.startsWith("UNMdP_")) {
-      student.code = `UNMdP_${String(index + 1).padStart(4, "0")}`;
+  const maxCodeNumber = ordered.reduce((max, student) => {
+    const match = String(student.code || "").trim().match(/^UNMdP_(\d+)$/i);
+    return match ? Math.max(max, Number(match[1])) : max;
+  }, 0);
+  if (!Number.isFinite(Number(state.nextCodeNumber)) || Number(state.nextCodeNumber) <= maxCodeNumber) {
+    state.nextCodeNumber = maxCodeNumber + 1;
+  }
+  const usedCodes = new Set();
+  ordered.forEach((student) => {
+    if (!student.normalizedKey) {
+      student.normalizedKey = normalizeSurnames(student.surnameOne, student.surnameTwo);
     }
+    if (!isValidStudentCode(student.code) || usedCodes.has(normalizeStudentCode(student.code))) {
+      student.code = nextStudentCode(usedCodes);
+    }
+    usedCodes.add(normalizeStudentCode(student.code));
   });
   delete state.pendingResult;
   if (typeof state.raceViewMode !== "string") state.raceViewMode = "session";
@@ -106,8 +123,112 @@ function migrateState() {
   state.audioVolume = 0.55;
 }
 
-function saveState() {
+function getSharedState() {
+  return SHARED_STATE_KEYS.reduce((shared, key) => {
+    shared[key] = state[key];
+    return shared;
+  }, {});
+}
+
+function applySharedState(sharedState) {
+  if (!sharedState || typeof sharedState !== "object") return;
+  applyingRemoteState = true;
+  SHARED_STATE_KEYS.forEach((key) => {
+    if (sharedState[key] !== undefined) state[key] = sharedState[key];
+  });
+  migrateState();
+  if (state.activeStudentId && !getStudent(state.activeStudentId)) {
+    state.activeStudentId = null;
+    state.activeSetupId = null;
+    state.screen = "login";
+  }
+  if (state.activeSetupId && !getSetup(state.activeSetupId)) {
+    state.activeSetupId = null;
+  }
+  applyingRemoteState = false;
+}
+
+function hasRemoteApi() {
+  return Boolean(REMOTE_API_URL);
+}
+
+function jsonpRequest(url) {
+  return new Promise((resolve, reject) => {
+    const callbackName = `designRaceJsonp_${Date.now()}_${Math.random().toString(36).slice(2)}`;
+    const script = document.createElement("script");
+    const separator = url.includes("?") ? "&" : "?";
+    const timeout = setTimeout(() => {
+      cleanup();
+      reject(new Error("Tiempo de espera agotado leyendo Google Sheets."));
+    }, 10000);
+
+    function cleanup() {
+      clearTimeout(timeout);
+      script.remove();
+      delete window[callbackName];
+    }
+
+    window[callbackName] = (payload) => {
+      cleanup();
+      resolve(payload);
+    };
+
+    script.onerror = () => {
+      cleanup();
+      reject(new Error("No se pudo cargar Google Sheets."));
+    };
+    script.src = `${url}${separator}callback=${callbackName}&t=${Date.now()}`;
+    document.head.append(script);
+  });
+}
+
+async function pullSharedState() {
+  if (!hasRemoteApi()) return false;
+  try {
+    const payload = await jsonpRequest(REMOTE_API_URL);
+    if (!payload.ok) throw new Error(payload.error || "No se pudo leer Google Sheets.");
+    applySharedState(payload.state);
+    saveState({ remote: false });
+    return true;
+  } catch (error) {
+    console.warn("Design Race Lab: no se pudo sincronizar desde Google Sheets.", error);
+    return false;
+  }
+}
+
+async function pushSharedState() {
+  if (!hasRemoteApi()) return false;
+  try {
+    await fetch(REMOTE_API_URL, {
+      method: "POST",
+      mode: "no-cors",
+      body: JSON.stringify({ state: getSharedState(), replace: state.screen === "admin" }),
+    });
+    await new Promise((resolve) => setTimeout(resolve, 1000));
+    await pullSharedState();
+    return true;
+  } catch (error) {
+    console.warn("Design Race Lab: no se pudo sincronizar hacia Google Sheets.", error);
+    return false;
+  }
+}
+
+function scheduleRemoteSave() {
+  if (!hasRemoteApi() || applyingRemoteState) return;
+  clearTimeout(remoteSaveTimer);
+  remoteSaveTimer = setTimeout(() => {
+    pushSharedState();
+  }, 500);
+}
+
+function saveState(options = {}) {
   localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
+  if (options.remote !== false) scheduleRemoteSave();
+}
+
+async function saveStateNow() {
+  localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
+  return pushSharedState();
 }
 
 function imageExists(src) {
@@ -155,14 +276,34 @@ function normalizeSurnames(one, two) {
   return [normalizeWord(one), normalizeWord(two)].filter(Boolean).sort().join("|");
 }
 
-function codeFromKey(key) {
-  const existing = state.students.find((student) => student.normalizedKey === key);
-  if (existing) return existing.code;
+function normalizeStudentCode(code) {
+  return String(code || "").trim().toUpperCase();
+}
+
+function isValidStudentCode(code) {
+  return /^UNMDP_\d{4,}$/i.test(String(code || "").trim());
+}
+
+function nextStudentCode(extraUsedCodes = new Set()) {
+  const usedCodes = new Set([...state.students.map((student) => normalizeStudentCode(student.code)), ...extraUsedCodes]);
   const maxNumber = state.students.reduce((max, student) => {
-    const match = String(student.code || "").match(/^UNMdP_(\d+)$/);
+    const match = String(student.code || "").trim().match(/^UNMdP_(\d+)$/i);
     return match ? Math.max(max, Number(match[1])) : max;
   }, 0);
-  return `UNMdP_${String(maxNumber + 1).padStart(4, "0")}`;
+  let nextNumber = Math.max(maxNumber + 1, Number(state.nextCodeNumber) || 1);
+  let code = `UNMdP_${String(nextNumber).padStart(4, "0")}`;
+  while (usedCodes.has(normalizeStudentCode(code))) {
+    nextNumber += 1;
+    code = `UNMdP_${String(nextNumber).padStart(4, "0")}`;
+  }
+  state.nextCodeNumber = nextNumber + 1;
+  return code;
+}
+
+function codeForSurnamesKey(key) {
+  const existing = state.students.find((student) => student.normalizedKey === key);
+  if (existing) return existing.code;
+  return nextStudentCode();
 }
 
 function formatMeters(value) {
@@ -286,7 +427,7 @@ function showScreen(screen) {
 
 function createOrLoadStudent(surnameOne, surnameTwo) {
   const normalizedKey = normalizeSurnames(surnameOne, surnameTwo);
-  const code = codeFromKey(normalizedKey);
+  const code = codeForSurnamesKey(normalizedKey);
   let student = state.students.find((item) => item.normalizedKey === normalizedKey || item.code === code);
   if (!student) {
     student = {
@@ -664,7 +805,7 @@ function getCurrentSessionResults() {
   return setup ? state.results.filter((result) => result.setupId === setup.id).sort((a, b) => b.distance - a.distance) : [];
 }
 
-function finishRaceWithResult(resultId) {
+async function finishRaceWithResult(resultId) {
   const setup = getSetup();
   if (!setup) return;
   const keep = state.results.find((result) => result.id === resultId && result.setupId === setup.id);
@@ -674,18 +815,18 @@ function finishRaceWithResult(resultId) {
   state.activeSetupId = null;
   state.screen = "box";
   els.finishModal.classList.add("hidden");
-  saveState();
+  await saveStateNow();
   render();
 }
 
-function openFinishModal() {
+async function openFinishModal() {
   const sessionResults = getCurrentSessionResults();
   if (!sessionResults.length) {
     els.markFeedback.textContent = "Primero poné una marca para cerrar la carrera.";
     return;
   }
   if (sessionResults.length === 1) {
-    finishRaceWithResult(sessionResults[0].id);
+    await finishRaceWithResult(sessionResults[0].id);
     return;
   }
   els.finishOptions.innerHTML = sessionResults
@@ -824,8 +965,9 @@ function render() {
   showScreen(state.screen === "admin" ? "admin" : state.activeStudentId ? state.screen === "login" ? "box" : state.screen : "login");
 }
 
-els.registerForm.addEventListener("submit", (event) => {
+els.registerForm.addEventListener("submit", async (event) => {
   event.preventDefault();
+  await pullSharedState();
   const form = new FormData(els.registerForm);
   const iconId = Number(form.get("carIcon"));
   if (!iconId || isIconUsed(iconId)) {
@@ -837,12 +979,15 @@ els.registerForm.addEventListener("submit", (event) => {
   state.activeStudentId = student.id;
   state.screen = "box";
   els.newCodeOutput.textContent = `Tu código es ${student.code}. Guardalo para volver a entrar.`;
-  saveState();
+  saveState({ remote: false });
+  await saveStateNow();
+  els.newCodeOutput.textContent = `Tu código es ${(getStudent(student.id) || student).code}. Guardalo para volver a entrar.`;
   render();
 });
 
-els.loginForm.addEventListener("submit", (event) => {
+els.loginForm.addEventListener("submit", async (event) => {
   event.preventDefault();
+  await pullSharedState();
   const rawCode = String(new FormData(els.loginForm).get("studentCode") || "").trim();
   if (rawCode.toLocaleLowerCase("es-AR") === TEACHER_CODE) {
     state.activeStudentId = null;
@@ -869,10 +1014,10 @@ els.boxForm.testDate.addEventListener("change", () => {
   renderBoxHistory();
 });
 
-els.boxForm.addEventListener("submit", (event) => {
+els.boxForm.addEventListener("submit", async (event) => {
   event.preventDefault();
   saveSetup(new FormData(els.boxForm));
-  saveState();
+  await saveStateNow();
   render();
 });
 
@@ -937,14 +1082,14 @@ els.previousDatesToggle.addEventListener("change", (event) => {
   renderRace();
 });
 
-els.raceResultForm.addEventListener("submit", (event) => {
+els.raceResultForm.addEventListener("submit", async (event) => {
   event.preventDefault();
   const form = new FormData(els.raceResultForm);
   const meters = Number(form.get("meters"));
   const centimeters = Number(form.get("centimeters"));
   addResult(meters + centimeters / 100);
   els.raceResultForm.reset();
-  saveState();
+  await saveStateNow();
   renderRace();
 });
 
@@ -960,31 +1105,31 @@ els.markModal.addEventListener("click", (event) => {
   if (event.target === els.markModal) closeMarkModal();
 });
 
-els.deleteMarkButton.addEventListener("click", () => {
+els.deleteMarkButton.addEventListener("click", async () => {
   const result = state.results.find((item) => item.id === selectedResultId);
   if (!result || result.setupId !== state.activeSetupId || result.studentId !== state.activeStudentId || state.screen !== "race") return;
   state.results = state.results.filter((item) => item.id !== selectedResultId);
   closeMarkModal();
-  saveState();
+  await saveStateNow();
   renderRace();
 });
 
-els.finishRaceButton.addEventListener("click", () => {
-  openFinishModal();
+els.finishRaceButton.addEventListener("click", async () => {
+  await openFinishModal();
 });
 
-els.exportButton.addEventListener("click", () => {
-  openFinishModal();
+els.exportButton.addEventListener("click", async () => {
+  await openFinishModal();
 });
 
 els.cancelFinishButton.addEventListener("click", () => {
   els.finishModal.classList.add("hidden");
 });
 
-els.confirmFinishButton.addEventListener("click", () => {
+els.confirmFinishButton.addEventListener("click", async () => {
   const selected = els.finishOptions.querySelector('input[name="finalResult"]:checked');
   if (!selected) return;
-  finishRaceWithResult(selected.value);
+  await finishRaceWithResult(selected.value);
 });
 
 els.adminLogoutButton.addEventListener("click", () => {
@@ -993,7 +1138,7 @@ els.adminLogoutButton.addEventListener("click", () => {
   render();
 });
 
-els.adminStudents.addEventListener("click", (event) => {
+els.adminStudents.addEventListener("click", async (event) => {
   const button = event.target.closest("button[data-action]");
   if (!button) return;
   const card = event.target.closest("[data-student-id]");
@@ -1003,6 +1148,9 @@ els.adminStudents.addEventListener("click", (event) => {
   if (button.dataset.action === "select-student") {
     adminSelectedStudentId = student.id;
     state.adminSelectedStudentId = student.id;
+    saveState({ remote: false });
+    render();
+    return;
   } else if (button.dataset.action === "delete-student") {
     state.results = state.results.filter((result) => result.studentId !== student.id);
     state.setups = state.setups.filter((setup) => setup.studentId !== student.id);
@@ -1013,9 +1161,20 @@ els.adminStudents.addEventListener("click", (event) => {
       state.adminSelectedStudentId = adminSelectedStudentId;
     }
   } else {
+    const nextStudentData = {};
     card.querySelectorAll("[data-field]").forEach((input) => {
-      student[input.dataset.field] = input.value.trim();
+      nextStudentData[input.dataset.field] = input.value.trim();
     });
+    const requestedCode = nextStudentData.code;
+    const duplicatedCode = requestedCode && state.students.some((item) => item.id !== student.id && normalizeStudentCode(item.code) === normalizeStudentCode(requestedCode));
+    if (duplicatedCode) {
+      alert("Ese código ya está usado por otro equipo. Elegí otro o dejá el campo vacío para generar uno nuevo.");
+      return;
+    }
+    Object.assign(student, nextStudentData);
+    if (!isValidStudentCode(student.code)) {
+      student.code = nextStudentCode(new Set([normalizeStudentCode(student.code)]));
+    }
     student.normalizedKey = normalizeSurnames(student.surnameOne, student.surnameTwo);
     if (car) {
       card.querySelectorAll("[data-car-field]").forEach((input) => {
@@ -1023,11 +1182,11 @@ els.adminStudents.addEventListener("click", (event) => {
       });
     }
   }
-  saveState();
+  await saveStateNow();
   render();
 });
 
-els.adminResults.addEventListener("click", (event) => {
+els.adminResults.addEventListener("click", async (event) => {
   const button = event.target.closest("button[data-action]");
   if (!button) return;
   const card = event.target.closest("[data-result-id]");
@@ -1037,7 +1196,7 @@ els.adminResults.addEventListener("click", (event) => {
     const distance = Number(card.querySelector('[data-field="distance"]').value);
     result.distance = distance;
   }
-  saveState();
+  await saveStateNow();
   render();
 });
 
@@ -1055,6 +1214,12 @@ els.volumeControl.addEventListener("input", (event) => {
   syncAudioPlayback();
 });
 
-loadState();
-els.boxForm.testDate.value = today();
-scanCarIcons().then(render);
+async function init() {
+  loadState();
+  els.boxForm.testDate.value = today();
+  await pullSharedState();
+  await scanCarIcons();
+  render();
+}
+
+init();

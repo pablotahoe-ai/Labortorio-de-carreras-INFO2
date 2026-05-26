@@ -31,7 +31,9 @@ El repo ya incluye `netlify.toml`. En Netlify usar:
 
 ## Datos
 
-La version actual usa `LocalStorage`, por lo que los datos quedan guardados en el navegador donde se usa la app. Para que todos vean datos compartidos desde distintos dispositivos, el siguiente paso deberia ser conectar Supabase, Firebase o Google Sheets.
+La version actual puede usar Google Sheets compartido mediante Apps Script. Ver `GOOGLE_SHEETS_SETUP.md`.
+
+Si `config.js` no tiene URL de Apps Script, la app usa `LocalStorage` como respaldo local.
 
 ## Assets reemplazables
 
